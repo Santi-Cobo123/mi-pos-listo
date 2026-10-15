@@ -1,0 +1,30 @@
+MI POS - LISTO PARA SUBIR
+
+La base de datos de Supabase ya está conectada (config.js ya está lleno).
+
+1) EN SUPABASE (una sola vez, antes de crear tu cuenta)
+   Authentication > URL Configuration:
+     Site URL = https://santi-cobo123.github.io/mi-pos/
+   (Si no lo pones, el enlace del correo de confirmación no funcionará.)
+   Opcional: Authentication > Sign In / Providers > Email:
+     desactiva "Confirm email" para entrar sin confirmar el correo.
+
+2) SUBIR A GITHUB
+   - Entra a tu repositorio "mi-pos" en github.com.
+   - Borra los archivos viejos (index.html, etc.).
+   - Add file > Upload files > arrastra estos 5 ARCHIVOS (no la carpeta):
+       index.html, app.js, styles.css, config.js, supabase.js
+   - Commit changes.
+   - Settings > Pages: Deploy from a branch, rama main, carpeta /(root).
+   - Espera 1-2 minutos y abre: https://santi-cobo123.github.io/mi-pos/  (Ctrl+F5)
+
+3) CREAR TU CUENTA
+   En la página pulsa "Crear cuenta" con tu correo y una contraseña (mínimo 8).
+   Pon el nombre de tu tienda y ya puedes usar el sistema.
+
+4) CERRAR EL REGISTRO (importante)
+   Supabase > Authentication > Sign In / Providers:
+   desactiva "Allow new users to sign up".
+
+Tus datos se ven en Supabase > Table Editor.
+Respaldo: dentro del sistema, Configuración > Descargar respaldo.
