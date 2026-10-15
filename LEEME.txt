@@ -28,3 +28,19 @@ La base de datos de Supabase ya está conectada (config.js ya está lleno).
 
 Tus datos se ven en Supabase > Table Editor.
 Respaldo: dentro del sistema, Configuración > Descargar respaldo.
+
+============================================================
+5) MULTI-USUARIO (admin y cajeros)
+   a) Supabase > SQL Editor > New query: pega TODO el archivo
+      multiusuario.sql y pulsa Run (una sola vez; repetirlo no daña nada).
+      Tu cuenta actual queda como ADMIN con usuario = la parte de tu correo
+      antes de la @ (ej: santiago@gmail.com -> santiago).
+   b) Sube a GitHub el app.js nuevo (reemplaza el anterior). Ctrl+F5.
+   c) Entra al menú "Usuarios" y crea tus cajeros con usuario y contraseña.
+      Ellos entran escribiendo solo su usuario (sin correo).
+
+   Qué puede hacer cada rol:
+     Admin : todo (productos, usuarios, configuración, respaldo, cajas).
+     Cajero: panel, punto de venta, abrir/cerrar cajas, ventas y Mi cuenta.
+   Todos los usuarios comparten los mismos productos, cajas y ventas.
+   Puedes seguir entrando con tu correo o con tu usuario.

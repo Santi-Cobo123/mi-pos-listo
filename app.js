@@ -7,7 +7,7 @@ const CFG = window.POS_CONFIG || {};
 const configurado = /^https:\/\/[^/\s]+$/.test(CFG.SUPABASE_URL || '') && CFG.SUPABASE_KEY && !/PEGA/.test(CFG.SUPABASE_URL + CFG.SUPABASE_KEY);
 const sb = configurado ? supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 
-let U = null, NEG = null, vista = 'dashboard', carrito = [], PRODS = [], CAJAS = [], cajaSel = null;
+let U = null, NEG = null, PERFIL = null, vista = 'dashboard', carrito = [], PRODS = [], CAJAS = [], cajaSel = null;
 let enSistema = false, recuperando = /type=recovery/.test(location.hash);
 
 const m = n => esc(NEG.moneda) + Number(n).toFixed(2);
@@ -15,7 +15,8 @@ const mt = n => NEG.moneda + Number(n).toFixed(2);
 const fecha = d => new Date(d).toLocaleString('es');
 const pintar = (v, html) => { if (vista === v) $('#app').innerHTML = html; };
 const h = (fn, ...a) => Promise.resolve().then(() => fn(...a)).catch(e => aviso(e.message, true));
-const nombreCorto = () => (U && U.email ? U.email.split('@')[0] : 'cajero');
+const nombreCorto = () => (PERFIL ? PERFIL.usuario : (U && U.email ? U.email.split('@')[0] : 'cajero'));
+const esAdmin = () => !!(PERFIL && PERFIL.rol === 'admin');
 
 function tr(msg) {
   msg = String(msg || '');
@@ -30,7 +31,9 @@ function tr(msg) {
     [/duplicate key/i, 'Ese código ya existe'],
     [/Failed to fetch|NetworkError|Load failed/i, 'Sin conexión con el servidor. Revisa tu internet.'],
     [/JWT|token is expired|not authenticated/i, 'Tu sesión expiró. Inicia sesión de nuevo.'],
-    [/new password should be different/i, 'La nueva contraseña debe ser diferente a la anterior']
+    [/new password should be different/i, 'La nueva contraseña debe ser diferente a la anterior'],
+    [/Could not find the function|schema cache/i, 'Falta ejecutar el archivo multiusuario.sql en Supabase (SQL Editor)'],
+    [/row-level security|permission denied/i, 'No tienes permiso para hacer esto (solo administradores)']
   ];
   for (const [re, txt] of t) if (re.test(msg)) return txt;
   return msg;
@@ -72,7 +75,7 @@ function pantallaAuth(modo, mensaje) {
   enSistema = false;
   const a = ventanaAuth({
     login: `<p>¡Bienvenido de vuelta! Inicia sesión</p>
-      <input id="a_mail" type="email" placeholder="Correo" autocomplete="username">
+      <input id="a_mail" type="text" placeholder="Usuario o correo" autocomplete="username" autocapitalize="none">
       <input id="a_pass" type="password" placeholder="Contraseña" autocomplete="current-password">
       <div id="a_err" class="err"></div>
       <button class="btn" id="a_ok">Entrar a mi oficina</button>
@@ -111,7 +114,13 @@ function chequearClaves() {
   return p;
 }
 async function doLogin() {
-  const { data, error } = await sb.auth.signInWithPassword({ email: val('a_mail'), password: $('#a_pass').value });
+  let email = val('a_mail');
+  if (!email) throw new Error('Escribe tu usuario o correo');
+  if (!email.includes('@')) { // inició con nombre de usuario
+    email = await q(sb.rpc('login_email', { p_usuario: email.toLowerCase() }));
+    if (!email) throw new Error('Usuario o contraseña incorrectos');
+  }
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: $('#a_pass').value });
   if (error) throw new Error(tr(error.message));
   await iniciar(data.user);
 }
@@ -140,7 +149,9 @@ async function iniciar(user) {
   if (recuperando) return;
   if (enSistema && U && U.id === user.id) return;
   U = user;
+  PERFIL = await q(sb.rpc('mi_perfil'));
   const cfg = await q(sb.from('config').select('*').maybeSingle());
+  if (cfg && !PERFIL) { await q(sb.rpc('registrar_dueno')); PERFIL = await q(sb.rpc('mi_perfil')); }
   if (!cfg) return pantallaNegocio();
   NEG = cfg; entrar();
 }
@@ -154,6 +165,7 @@ function pantallaNegocio() {
     const b = $('#a_ok'); b.disabled = true;
     try {
       const nombre = val('n_nom'); if (!nombre) throw new Error('Escribe el nombre de tu tienda');
+      await q(sb.rpc('registrar_dueno'));
       await q(sb.from('config').insert({ nombre }));
       await q(sb.from('cajas').insert({ nombre: 'Caja 1' }));
       await iniciar(U);
@@ -167,19 +179,21 @@ function entrar() {
 }
 async function salir() {
   await sb.auth.signOut();
-  U = null; NEG = null; pantallaAuth('login');
+  U = null; NEG = null; PERFIL = null; pantallaAuth('login');
 }
 
 // ============ MENÚ ============
 function menu() {
-  const it = [['dashboard', '📊 Panel'], ['pos', '💳 Punto de venta'], ['cajas', '🗄️ Cajas'], ['productos', '📦 Productos'], ['ventas', '🧾 Ventas'], ['config', '⚙️ Configuración']];
+  const it = [['dashboard', '📊 Panel'], ['pos', '💳 Punto de venta'], ['cajas', '🗄️ Cajas'], ['productos', '📦 Productos', 1], ['ventas', '🧾 Ventas'], ['usuarios', '👥 Usuarios', 1], ['config', '⚙️ Configuración', 1], ['cuenta', '🔑 Mi cuenta']]
+    .filter(x => !x[2] || esAdmin());
   $('#side').innerHTML = `<h1>🛒 ${esc(NEG.nombre)}</h1>` +
     it.map(([v, t]) => `<button class="${v === vista ? 'on' : ''}" onclick="ir('${v}')">${t}</button>`).join('') +
-    `<div id="usr"><div>👤 ${esc(U.email)}</div><button onclick="h(salir)">🚪 Cerrar sesión</button></div>`;
+    `<div id="usr"><div>👤 ${esc(nombreCorto())} (${esc(PERFIL ? PERFIL.rol : 'admin')})</div><button onclick="h(salir)">🚪 Cerrar sesión</button></div>`;
 }
 function ir(v) { vista = v; menu(); render(); }
 function render() {
-  const vistas = { dashboard: vDash, pos: vPOS, cajas: vCajas, productos: vProductos, ventas: vVentas, config: vConfig };
+  if (['productos', 'usuarios', 'config'].includes(vista) && !esAdmin()) vista = 'dashboard';
+  const vistas = { dashboard: vDash, pos: vPOS, cajas: vCajas, productos: vProductos, ventas: vVentas, usuarios: vUsuarios, config: vConfig, cuenta: vCuenta };
   $('#app').innerHTML = '<p style="color:var(--gris)">Cargando…</p>';
   h(vistas[vista]);
 }
@@ -307,20 +321,20 @@ async function vCajas() {
   const [cajas, cierres] = await Promise.all([q(sb.from('cajas').select('*').order('id')), q(sb.from('cierres').select('*').order('id', { ascending: false }).limit(30))]);
   CAJAS = cajas;
   pintar('cajas', `<h2>Cajas registradoras</h2>
-  <div class="card row"><input id="ncaja" placeholder="Nombre de la nueva caja" maxlength="60"><button class="btn" onclick="h(addCaja)">+ Crear caja</button></div>
+  ${esAdmin() ? `<div class="card row"><input id="ncaja" placeholder="Nombre de la nueva caja" maxlength="60"><button class="btn" onclick="h(addCaja)">+ Crear caja</button></div>` : ''}
   <div class="card"><table><tr><th>Caja</th><th>Estado</th><th>Apertura</th><th>Cajero</th><th>Acción</th></tr>
   ${cajas.map(c => `<tr><td>${esc(c.nombre)}</td>
     <td><span class="badge ${c.abierta ? 'abierta' : 'cerrada'}">${c.abierta ? 'Abierta' : 'Cerrada'}</span></td>
     <td>${c.abierta ? m(c.apertura) + ' · ' + esc(fecha(c.fecha_apertura)) : '-'}</td><td>${esc(c.cajero) || '-'}</td>
     <td>${c.abierta ? `<button class="btn rojo" onclick="h(cerrarCaja,${c.id})">Cerrar caja</button>` : `<button class="btn verde" onclick="h(abrirCaja,${c.id})">Abrir caja</button>`}
-    ${!c.abierta && cajas.length > 1 ? `<button class="btn gris" onclick="h(delCaja,${c.id})">🗑</button>` : ''}</td></tr>`).join('')}</table></div>
+    ${!c.abierta && cajas.length > 1 && esAdmin() ? `<button class="btn gris" onclick="h(delCaja,${c.id})">🗑</button>` : ''}</td></tr>`).join('')}</table></div>
   <div class="card"><h3>Últimos cierres</h3><table><tr><th>Cierre</th><th>Caja</th><th>Cajero</th><th>Ventas</th><th>Efectivo esperado</th></tr>
   ${cierres.map(c => `<tr><td>${esc(fecha(c.fecha_cierre))}</td><td>${esc(c.caja_nombre)}</td><td>${esc(c.cajero)}</td><td>${m(+c.ventas_efectivo + +c.ventas_otros)} (${c.num_ventas})</td><td>${m(c.esperado)}</td></tr>`).join('') || '<tr><td colspan="5">Aún no hay cierres</td></tr>'}</table></div>`);
 }
 async function addCaja() { const n = $('#ncaja').value.trim(); if (!n) return; await q(sb.from('cajas').insert({ nombre: n })); vCajas(); }
 async function delCaja(id) { if (!confirm('¿Eliminar esta caja? (sus ventas anteriores se conservan)')) return; await q(sb.from('cajas').delete().eq('id', id)); vCajas(); }
 async function abrirCaja(id) {
-  const nom = prompt('Nombre del cajero:', nombreCorto()); if (!nom || !nom.trim()) return;
+  const nom = esAdmin() ? prompt('Nombre del cajero:', nombreCorto()) : nombreCorto(); if (!nom || !nom.trim()) return;
   const s = prompt('Monto inicial en efectivo:', '0'); if (s === null) return;
   const n = Number(s); if (!isFinite(n) || n < 0) throw new Error('Monto inválido');
   const r = await q(sb.from('cajas').update({ abierta: true, apertura: n, fecha_apertura: new Date().toISOString(), cajero: nom.trim().slice(0, 40) }).eq('id', id).eq('abierta', false).select());
@@ -388,10 +402,6 @@ function vConfig() {
   <label>Impuesto (%)<input id="ci" type="number" step="0.01" min="0" max="100" value="${esc(NEG.impuesto)}"></label>
   <label>Símbolo de moneda<input id="cm" value="${esc(NEG.moneda)}" maxlength="4"></label>
   <button class="btn" onclick="h(saveConf)">Guardar</button></div>
-  <div class="card col"><h3>Cambiar contraseña</h3>
-  <input id="k1" type="password" placeholder="Nueva contraseña (mínimo 8)" autocomplete="new-password">
-  <input id="k2" type="password" placeholder="Repetir contraseña" autocomplete="new-password">
-  <button class="btn" onclick="h(cambiarClave)">Cambiar contraseña</button></div>
   <div class="card col"><h3>Respaldo</h3>
   <p style="font-size:14px;color:var(--gris)">Descarga una copia de todos tus datos (productos, cajas, ventas y cierres).</p>
   <button class="btn gris" onclick="h(respaldo)">⬇️ Descargar respaldo</button></div>`);
@@ -400,8 +410,67 @@ async function saveConf() {
   const nombre = val('ct'), impuesto = Number($('#ci').value), moneda = val('cm');
   if (!nombre || !moneda) throw new Error('Completa nombre y moneda');
   if (!isFinite(impuesto) || impuesto < 0 || impuesto > 100) throw new Error('El impuesto debe estar entre 0 y 100');
-  NEG = await q(sb.from('config').update({ nombre, impuesto, moneda }).eq('user_id', U.id).select().single());
+  NEG = await q(sb.from('config').update({ nombre, impuesto, moneda }).eq('user_id', NEG.user_id).select().single());
   menu(); aviso('Configuración guardada');
+}
+// ============ USUARIOS ============
+async function vUsuarios() {
+  const us = await q(sb.from('miembros').select('user_id,negocio_id,usuario,rol,created_at').order('created_at'));
+  pintar('usuarios', `<h2>Usuarios</h2>
+  <div class="card row">
+    <input id="u_nom" placeholder="Usuario" maxlength="30" autocomplete="off" autocapitalize="none">
+    <input id="u_pass" type="password" placeholder="Contraseña (mín. 8)" autocomplete="new-password">
+    <select id="u_rol"><option value="cajero">Cajero</option><option value="admin">Administrador</option></select>
+    <button class="btn" onclick="h(addUsuario)">+ Crear usuario</button>
+  </div>
+  <div class="card"><table><tr><th>Usuario</th><th>Rol</th><th>Creado</th><th></th></tr>
+  ${us.map(u => {
+    const yo = u.user_id === U.id, dueno = u.user_id === u.negocio_id;
+    return `<tr><td>${esc(u.usuario)}${dueno ? ' <small style="color:var(--gris)">(dueño)</small>' : ''}</td>
+    <td>${yo || dueno ? esc(u.rol) : `<select onchange="h(rolUsuario,'${u.user_id}',this.value)"><option value="cajero" ${u.rol === 'cajero' ? 'selected' : ''}>cajero</option><option value="admin" ${u.rol === 'admin' ? 'selected' : ''}>admin</option></select>`}</td>
+    <td>${esc(fecha(u.created_at))}</td>
+    <td style="text-align:right">${yo ? '(tú)' : `<button class="btn gris" title="Cambiar contraseña" onclick="h(claveUsuario,'${u.user_id}','${esc(u.usuario)}')">🔑</button>
+      ${dueno ? '' : `<button class="btn rojo" title="Eliminar" onclick="h(delUsuario,'${u.user_id}','${esc(u.usuario)}')">🗑</button>`}`}</td></tr>`;
+  }).join('')}</table></div>`);
+  const f = $('#u_pass'); if (f) f.onkeydown = e => { if (e.key === 'Enter') h(addUsuario); };
+}
+async function addUsuario() {
+  const usuario = val('u_nom').toLowerCase(), clave = $('#u_pass').value, rol = $('#u_rol').value;
+  if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) throw new Error('El usuario debe tener de 3 a 30 caracteres (letras, números, punto o guion, sin espacios)');
+  if (clave.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres');
+  await q(sb.rpc('crear_usuario', { p_usuario: usuario, p_clave: clave, p_rol: rol }));
+  aviso('Usuario "' + usuario + '" creado ✅');
+  vUsuarios();
+}
+async function rolUsuario(id, rol) {
+  try { await q(sb.rpc('cambiar_rol_usuario', { p_id: id, p_rol: rol })); aviso('Rol actualizado'); }
+  finally { vUsuarios(); }
+}
+async function claveUsuario(id, nombre) {
+  const c = prompt('Nueva contraseña para "' + nombre + '" (mínimo 8):'); if (c === null) return;
+  if (c.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres');
+  await q(sb.rpc('cambiar_clave_usuario', { p_id: id, p_clave: c }));
+  aviso('Contraseña de "' + nombre + '" actualizada');
+}
+async function delUsuario(id, nombre) {
+  if (!confirm('¿Eliminar al usuario "' + nombre + '"? Ya no podrá entrar al sistema. (Sus ventas se conservan)')) return;
+  await q(sb.rpc('eliminar_usuario', { p_id: id }));
+  aviso('Usuario eliminado'); vUsuarios();
+}
+
+// ============ MI CUENTA ============
+function vCuenta() {
+  const correo = U.email && !/@usuarios\.mipos\.app$/.test(U.email) ? U.email : null;
+  pintar('cuenta', `<h2>Mi cuenta</h2>
+  <div class="card col"><h3>Mis datos</h3>
+  <div>Usuario: <b>${esc(nombreCorto())}</b></div>
+  <div>Rol: <b>${esc(PERFIL ? PERFIL.rol : 'admin')}</b></div>
+  ${correo ? `<div>Correo: <b>${esc(correo)}</b></div>` : ''}
+  <p style="font-size:13px;color:var(--gris)">Para entrar puedes escribir tu usuario${correo ? ' o tu correo' : ''}.</p></div>
+  <div class="card col"><h3>Cambiar contraseña</h3>
+  <input id="k1" type="password" placeholder="Nueva contraseña (mínimo 8)" autocomplete="new-password">
+  <input id="k2" type="password" placeholder="Repetir contraseña" autocomplete="new-password">
+  <button class="btn" onclick="h(cambiarClave)">Cambiar contraseña</button></div>`);
 }
 async function cambiarClave() {
   const p = $('#k1').value;
